@@ -1,6 +1,7 @@
 import numpy as np
 import win32gui 
 import cv2
+import matplotlib.pyplot as plt
 
 class Kalman:
     """ 
@@ -20,6 +21,8 @@ class Kalman:
 
         # Control input model. Model that predicts what changes based on the commands to the vehicle E.g. differential model, ackermann, etc 
         # Matrix of size n x m, where m is the dimension of u
+        # If you don't have B and u, you can simply not use them:
+        # https://www.youtube.com/watch?v=18TKA-YWhX0?t=31m42s
         self.B = B
 
         # Measurement matrix
@@ -41,6 +44,16 @@ class Kalman:
         # Matrix size is k x k where k is the size of the measurement vector
         self.R = R
 
+        self.setMode()
+
+    def setMode(self):
+        parameters = [self.A, self.C, self.Q, self.R, self.x_prev, self.P_prev]
+        
+        if all(map(lambda x: np.isscalar(x), parameters)):
+            self.mode = '1D'
+        else:
+            self.mode = '2D'
+        print(f"Mode: {self.mode}")
     
     def predict(self, u=None):
         """ 
@@ -59,17 +72,21 @@ class Kalman:
         """
         print("\nPrediction step...")
 
-        # Estimate the state at time t
-        # If you don't have B and u, you can simply not use them:
-        # https://www.youtube.com/watch?v=18TKA-YWhX0?t=31m42s
-        x_predicted = self.A @ self.x_prev 
-        
-        if self.B:
-            x_predicted += self.B @ u
+        if self.mode == '1D':
+            x_predicted = self.A * self.x_prev 
+            if self.B:
+                x_predicted += self.B * u
+            P_predicted = self.A * self.P_prev + self.Q
+        else:
+            # Estimate the state at time t
+            x_predicted = self.A @ self.x_prev 
+            
+            if self.B:
+                x_predicted += self.B @ u
 
-        # Now predict how much noise will be in the measurements
-        # Error covariance matrix: Variance of the a priori estimate
-        P_predicted = self.A @ self.P_prev @ self.A.transpose() + self.Q
+            # Now predict how much noise will be in the measurements
+            # Error covariance matrix: Variance of the a priori estimate
+            P_predicted = self.A @ self.P_prev @ self.A.transpose() + self.Q
 
         self.x_predicted = x_predicted
         self.P_predicted = P_predicted
@@ -84,10 +101,14 @@ class Kalman:
         Or how much to trust this sensor
         
         """
-        # Innovation covariance
-        S = self.C @ self.P_predicted @ self.C.transpose() + self.R
-        # Kalman gain
-        K = self.P_predicted @ self.C.transpose() @ np.linalg.inv(S)
+        if self.mode == '1D':
+            S = self.C * self.P_predicted + self.R
+            K = self.P_predicted / S
+        else:
+            # Innovation covariance
+            S = self.C @ self.P_predicted @ self.C.transpose() + self.R
+            # Kalman gain
+            K = self.P_predicted @ self.C.transpose() @ np.linalg.inv(S)
         return K
 
     def update(self, z):
@@ -106,38 +127,42 @@ class Kalman:
         print("\nUpdate step...")
 
         K = self.__calculate_Kalman_gain()
-
-        # Innovation
-        y = z - self.C @ self.x_predicted
-        # Update the estimate with measurements from sensor
-        x = self.x_predicted + K @ y
         
-        I = np.identity(K.shape[0])
-        P = (I - K @ self.C) @ self.P_predicted
+        if self.mode == '1D':
+            y = z - self.C * self.x_predicted
+            x = self.x_predicted + K * y
+            P = (1 - K * self.C) * self.P_predicted
+            self.P_prev = P
+            self.x_prev = x
 
-        self.P_prev = P.copy()
-        self.x_prev = x.copy()
+        else:
+            # Innovation
+            y = z - self.C @ self.x_predicted
+            # Update the estimate with measurements from sensor
+            x = self.x_predicted + K @ y
+            
+            I = np.identity(K.shape[0])
+            P = (I - K @ self.C) @ self.P_predicted
+
+            self.P_prev = P.copy()
+            self.x_prev = x.copy()
         return (x, P)
 
 def enum_handler(hwnd, results):
     if win32gui.GetWindowText(hwnd) == "image":
-        #results.append(win32gui.GetWindowRect(hwnd))
-        (flags, showCmd, ptMin, ptMax, rect) = win32gui.GetWindowPlacement(hwnd)
-        results.append(rect)
-        return
-    # results.append({
-    #     #"hwnd":hwnd,
-    #     #"hwnd_above":win32gui.GetWindow(hwnd, win32con.GW_HWNDPREV), # Window handle to above window
-    #     "title":win32gui.GetWindowText(hwnd),
-    #     #"visible":win32gui.IsWindowVisible(hwnd) == 1,
-    #     #"minimized":window_placement[1] == win32con.SW_SHOWMINIMIZED,
-    #     #"maximized":window_placement[1] == win32con.SW_SHOWMAXIMIZED,
-    #     "rectangle":win32gui.GetWindowRect(hwnd) #(left, top, right, bottom)
-    #     })
+        win_rect = win32gui.GetWindowRect(hwnd)
+        clientRect = win32gui.GetClientRect(hwnd)
+        
+        win_h_with_title = (win_rect[-1] - win_rect[1])
+        win_h_with_no_title = (clientRect[-1] - clientRect[1]) - 1
+        title_bar_size = win_h_with_title - win_h_with_no_title
 
+        x_top_left_corner = win_rect[0]
+        y_top_left_corner = win_rect[1] + title_bar_size
+        
+        results.append((x_top_left_corner, y_top_left_corner))
 
-if __name__ == "__main__":
-    
+def example_2D_constant_velocity_mouse():
     # 2D Constant velocity model
     #
     # state = [x; vx; y; vy]
@@ -175,19 +200,14 @@ if __name__ == "__main__":
     mouse_prev = (0, 0)
     x_kalman_prev = (0,0,0,0)
     while True:
-        
         kalman.predict()
-        
-        mouse = win32gui.GetCursorPos()
 
-        enumerated_windows = [[0,0,0,0]]
+        enumerated_windows = [[0,0]]
         win32gui.EnumWindows(enum_handler, enumerated_windows)
-        windowCorners = enumerated_windows[-1]
-        #print(f"windowCorners: {windowCorners}")
-        #print(f"Mouse: {mouse}")
-        x_window = windowCorners[0] + 92
-        y_window = windowCorners[1]
-        
+        (x_window, y_window) = enumerated_windows[-1][:2]
+
+        # Sense
+        mouse = win32gui.GetCursorPos()
         z = np.array([[mouse[0]], [mouse[1]]])
         
         x, P = kalman.update(z)
@@ -210,4 +230,42 @@ if __name__ == "__main__":
         if k==27:
             break
 
-        print(f'New x: \n {x}')
+def example_2D_constant_velocity():
+    A = 1.0
+    B = None
+    C = 1.0
+    Q = 0.01
+    R = 0.01
+
+    initial_state_x = 5.3
+    initial_state_y = 3.6
+    initial_P = 0.01
+    
+    kalman_x = Kalman(A, B, C, Q, R, initial_state_x, initial_P)
+    kalman_y = Kalman(A, B, C, Q, R, initial_state_y, initial_P)
+
+    vx = 0.2
+    vy = 0.1
+    T = 0.5
+    x = np.arange(0, 2, vx*T)
+    y = np.arange(5, 6, vy*T)
+    
+    states = np.zeros((x.shape[0], 2))
+
+    for k,_ in enumerate(x):
+        kalman_x.predict()
+        kalman_y.predict()
+        new_state_x, P = kalman_x.update(x[k])
+        new_state_y, P = kalman_y.update(y[k])
+        states[k, :] = [new_state_x, new_state_y]
+
+    plt.plot(x, y, 'b.-', label='Object position')
+    plt.plot(states[:, 0], states[:, 1], 'r.-', label='Corrected position')
+    plt.legend()
+    plt.show()
+
+if __name__ == "__main__":
+    example_2D_constant_velocity_mouse()
+    #example_2D_constant_velocity()
+
+
