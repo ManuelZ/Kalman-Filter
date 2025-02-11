@@ -4,9 +4,9 @@ import win32gui
 import numpy as np
 from kalman import Kalman
 
-# Only works in Windows
+# Only works on Windows
 # Usage: python examples.py
-#
+
 
 WINDOW_NAME = "Mouse"
 GREEN = (0,255,0)
