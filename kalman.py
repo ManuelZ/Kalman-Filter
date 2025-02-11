@@ -1,37 +1,63 @@
 import numpy as np
+from math import sqrt
+from numpy import dot
 
 class Kalman:
     """ 
     Kalman filters assume linear system dinamics.
 
-    Trick: run the Kalman filter for the x, y and z values independently, so you have smaller matrices.
+    "You have to design the state (x; P), the process (F; Q), the measurement (z; R),and the measurement function H. 
+    If the system has control inputs, such as a robot, you will also design B and u." From [4].
+
+    From [4]:
+    Initialization
+        1. Initialize the state of the filter
+        2. Initialize our belief in the state
+    Predict
+        1. Use process model to predict state at the next time step
+        2. Adjust belief to account for the uncertainty in prediction
+    Update
+        1. Get a measurement and associated belief about its accuracy
+        2. Compute residual between estimated state and measurement
+        3. Compute scaling factor based on whether the measurement or prediction is more accurate
+        4. Set state between the prediction and measurement based on scaling factor
+        5. update belief in the state based on how certain we are in the measurement
+
+    Resources:
+    - [1] https://www.kalmanfilter.net/stateUpdate.html
+    - [2] Kalman Filter tutorial: https://youtu.be/18TKA-YWhX0
+    - [3] filterpy package
+    - [4] Kalman and Bayesian filters in Python
     """
-    def __init__(self, A, B, C, Q, R, x_prev=None, P_prev=None):
+    def __init__(self, F, B, H, Q, R, x_prev=None, P_prev=None):
+        self.history = []
+
         # State at time t-1. Column vector.
         # Belief at previous time step
-        self.x_prev = x_prev
+        self.x_posterior = x_prev
+        
         # Error covariance of the state estimate at previous time step
-        self.P_prev = P_prev
+        self.P_posterior = P_prev
 
         # State transition model or motion model (equations of motion) that predict the new state
         # matrix of size n x n where n is the dimension of x (the state vector)
-        self.A = A
+        self.F = F
 
+        # Control matrix. It illustrates the mechanism by which uk influences state xk. 
         # Control input model. Model that predicts what changes based on the commands to the vehicle E.g. differential model, ackermann, etc 
         # Matrix of size n x m, where m is the dimension of u
         # If you don't have B and u, you can simply not use them:
         # https://www.youtube.com/watch?v=18TKA-YWhX0?t=31m42s
         self.B = B
 
-        # Measurement matrix
+        # Measurement matrix, aka Observation matrix.
         # How to map from the sensor reading to the state vector.
         # Matrix of size k x n, where k is the size of the measurement vector z.
-        self. C = C
+        self.H = H
 
         # Process noise
-        # Covariance of the multivariate gaussian noise that models the randomness in the state transition
+        # Covariance of the multivariate gaussian noise that models the randomness in the state transition.
         # As a starting point, put the standard deviation of the noise of the sensor given from the manufacturer.
-        # THIS IS GOING TO BE UPDATED! HOW? WHO KNOWS!
         # Matrix size is n x n
         self.Q = Q
 
@@ -42,21 +68,28 @@ class Kalman:
         # Matrix size is k x k where k is the size of the measurement vector
         self.R = R
 
-        self.setMode()
+        # system uncertainty
+        #self.S
 
-    def setMode(self):
-        parameters = [self.A, self.C, self.Q, self.R, self.x_prev, self.P_prev]
+        self.set_mode()
+
+    def set_mode(self):
+        parameters = [self.F, self.H, self.Q, self.R, self.x_posterior, self.P_posterior]
         
         if all(map(lambda x: np.isscalar(x), parameters)):
-            self.mode = '1D'
+            self.__mode = '1D'
         else:
-            self.mode = '2D'
-        print(f"Mode: {self.mode}")
+            self.__mode = '2D'
     
-    def predict(self, u=None):
+    def predict(self, u=None) -> tuple[np.ndarray, np.ndarray]:
         """ 
-        *Predict* the belief (the state and the error covariance matrix) about the state at time t.
-        (Also called control update step)
+        Propagate the current state estimate and uncertainty to form the prior belief for the next time step.
+
+        Propagates the current state estimate and its error covariance forward in time using the system dynamics model. 
+        Computes the prior (predicted) state and covariance before incorporating any new measurement.
+        This step is sometimes referred to as the "control update" because it can incorporate control inputs into the 
+        prediction.
+
         This step increases the uncertainty of the robot belief.
         
         INPUT:
@@ -66,28 +99,26 @@ class Kalman:
         x_predicted: State at time t. Column vector.
         P_predicted: Error covariance of the state estimate. Quadratic matrix.
         """
-        #print("\nPrediction step...")
 
-        if self.mode == '1D':
-            x_predicted = self.A * self.x_prev 
+        if self.__mode == '1D':
+            self.x_prior = self.F * self.x_posterior 
             if self.B:
-                x_predicted += self.B * u
-            P_predicted = self.A * self.P_prev + self.Q
+                self.x_prior += self.B * u
+            self.P_prior = self.F * self.P_posterior + self.Q
+        
         else:
-            # Estimate the state at time t
-            x_predicted = self.A @ self.x_prev 
+            # Compute the prior. Estimate the state at time t based on state at t-1.
+            self.x_prior = self.F @ self.x_posterior
             
             if self.B:
-                x_predicted += self.B @ u
+                self.x_prior += self.B @ u
 
-            # Now predict how much noise will be in the measurements
-            # Error covariance matrix: Variance of the a priori estimate
-            P_predicted = self.A @ self.P_prev @ self.A.transpose() + self.Q
+            # Update the covariance matrix. Predict how much noise will be in the measurements.
+            self.P_prior = self.F @ self.P_posterior @ self.F.transpose() + self.Q
 
-        self.x_predicted = x_predicted
-        self.P_predicted = P_predicted
+        return (self.x_prior, self.P_prior)
     
-    def __calculate_Kalman_gain(self):
+    def __calculate_kalman_gain(self):
         """
         INPUT
         P: Error covariance of the state estimate. Quadratic matrix.
@@ -96,14 +127,17 @@ class Kalman:
         K: Kalman gain. It specifies the degree to which the measurement is incorporated into the new state estimate.
         Or how much to trust this sensor
         """
-        if self.mode == '1D':
-            S = self.C * self.P_predicted + self.R
-            K = self.P_predicted / S
+        if self.__mode == '1D':
+            self.S = self.H * self.P_prior + self.R
+            K = self.P_prior / self.S
         else:
-            # Innovation covariance
-            S = self.C @ self.P_predicted @ self.C.transpose() + self.R
+            # Innovation covariance.
+            # This is the covariance of `self.H @ self.x_prior`
+            self.S = self.H @ self.P_prior @ self.H.transpose() + self.R
+            self.SI = np.linalg.inv(self.S)
             # Kalman gain
-            K = self.P_predicted @ self.C.transpose() @ np.linalg.inv(S)
+            K = self.P_prior @ self.H.transpose() @ self.SI
+        
         #print(f"Kalman Gain:\n{K:.2f}")
         return K
 
@@ -120,31 +154,32 @@ class Kalman:
         x: posterior belief
         P: covariance of the posterior belief
         """
-        #print("\nUpdate step...")
 
-        K = self.__calculate_Kalman_gain()
+        K = self.__calculate_kalman_gain()
         
-        if self.mode == '1D':
-            y = z - self.C * self.x_predicted
-            x = self.x_predicted + K * y
-            P = (1 - K * self.C) * self.P_predicted
-            self.P_prev = P
-            self.x_prev = x
+        if self.__mode == '1D':
+            self.y = z - self.H * self.x_prior
+            self.x_posterior = self.x_prior + K * self.y
+            self.P_posterior = (1 - K * self.H) * self.P_prior
 
         else:
-            # Innovation
-            y = z - self.C @ self.x_predicted
-            # Update the estimate with measurements from sensor
-            x = self.x_predicted + K @ y
+            # Innovation.
+            # `self.H @ self.x_prior` maps the current state to the observation space.
+            # This is the error between the prediction and measurement, in measurement space.
+            self.y = z - self.H @ self.x_prior
+            
+            # Update the estimate with measurements from sensor.
+            # This is the posterior.
+            self.x_posterior = self.x_prior + K @ self.y
             
             I = np.identity(K.shape[0])
-            # TODO: read https://www.kalmanfilter.net/simpCovUpdate.html
-            #P = (I - K @ self.C) @ self.P_predicted
-            P = (I - K @ self.C) @ self.P_predicted @ (I - K @ self.C).T + K @ self.R @ K.T
+            # Covariance update equation. 
+            # There is a simplified version, but is numerically unstable:
+            # https://www.kalmanfilter.net/simpCovUpdate.html
+            self.P_posterior = (I - K @ self.H) @ self.P_prior @ (I - K @ self.H).T + K @ self.R @ K.T
 
-            self.P_prev = P.copy()
-            self.x_prev = x.copy()
-        return (x, P)
+        self.history.append(self.x_posterior)
+        return (self.x_posterior, self.P_posterior)
 
 
 

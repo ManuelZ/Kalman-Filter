@@ -8,38 +8,54 @@ from kalman import Kalman
 # Usage: python examples.py
 #
 
-def enum_handler(hwnd, results):
-    if win32gui.GetWindowText(hwnd) == "image":
-        win_rect = win32gui.GetWindowRect(hwnd)
-        clientRect = win32gui.GetClientRect(hwnd)
-        
-        win_h_with_title = (win_rect[-1] - win_rect[1])
-        win_h_with_no_title = (clientRect[-1] - clientRect[1]) - 1
-        title_bar_size = win_h_with_title - win_h_with_no_title
+WINDOW_NAME = "Mouse"
+GREEN = (0,255,0)
+RED = (0, 0, 255)
 
-        x_top_left_corner = win_rect[0]
-        y_top_left_corner = win_rect[1] + title_bar_size
-        
-        results.append((x_top_left_corner, y_top_left_corner))
+
+def get_window_coordinates_handler(hwnd, results):
+    """
+    Get the top left coordinates of the window.
+    """
+    if win32gui.GetWindowText(hwnd) == WINDOW_NAME:
+        # Screen coordinates of the upper-left and lower-right corners of the window.
+        win_rect = win32gui.GetWindowRect(hwnd)
+
+        # The client coordinates specify the upper-left and lower-right corners of the client area.
+        # This basically gives (0, 0, 512, 512) for a 512x512 imshow call
+        client_rect = win32gui.GetClientRect(hwnd)
+
+        extra_h = (win_rect[3] - win_rect[1]) - (client_rect[3] - client_rect[1])
+        extra_w = (win_rect[2] - win_rect[0]) - (client_rect[2] - client_rect[0])
+
+        x_top_left_corner = win_rect[0] + extra_w // 2
+        # I'm not sure why but the final extra_w // 2 is needed to get the center of the mouse aligned with the arrow
+        y_top_left_corner = win_rect[1] + extra_h - (extra_w // 2)
+
+        results[0,0] = x_top_left_corner
+        results[0,1] = y_top_left_corner
+
 
 def example_2D_constant_velocity_mouse():
-    # 2D Constant velocity model
-    #
-    # state = [x; vx; y; vy]
-    # measurement vector = [x; y]
-
-    A = np.array([[1, 1, 0, 0], # NOTE: this would mean 1 * x + 1 * vx, so dt = 1!!!!   
+    """   
+    2D Constant velocity model
+    
+    state = [x; vx; y; vy]
+    measurement vector = [x; y]
+    """
+    
+    # State transition matrix
+    A = np.array([[1, 1, 0, 0], # NOTE: this row means 1*x + 1*vx, so dt = 1
                   [0, 1, 0, 0],
                   [0, 0, 1, 1],
                   [0, 0, 0, 1]])
 
     n = A.shape[0]
-    k = 2
     
     # No Control model
     B = None
 
-    # Measurement matrix.
+    # Measurement matrix, aka Observation matrix
     # our sensors only know the position x and y
     C = np.array([[1, 0, 0, 0],
                   [0, 0, 1, 0]])
@@ -57,43 +73,45 @@ def example_2D_constant_velocity_mouse():
 
     img = np.zeros((512,512,3), np.uint8)
 
-    mouse_prev = (0, 0)
-    x_kalman_prev = (0,0,0,0)
+    window_top_left_coordinates = np.zeros((1, 2), dtype=np.int32)
+    mouse_position_prev = np.zeros(2, dtype=np.int32)
+    x_kalman_prev = np.zeros((4,1), dtype=np.int32)
+
     while True:
         kalman.predict()
 
-        enumerated_windows = [[0,0]]
-        win32gui.EnumWindows(enum_handler, enumerated_windows)
-        (x_window, y_window) = enumerated_windows[-1][:2]
-
         # Sense
-        mouse = win32gui.GetCursorPos()
-        z = np.array([[mouse[0]], [mouse[1]]])
-        
-        x, P = kalman.update(z)
+        win32gui.EnumWindows(get_window_coordinates_handler, window_top_left_coordinates)
+        mouse_position = np.array(win32gui.GetCursorPos(), dtype=np.int32).reshape(-1)
+        z = mouse_position.copy().reshape(2, 1)
 
-        # Plot mouse
-        cv2.line(img, (mouse_prev[0] - x_window, mouse_prev[1] - y_window),
-                      (mouse[0] - x_window, mouse[1] - y_window),
-                      (0,255,0), 1)
+        # Calculate the posterior and its covariance
+        x, P = kalman.update(z)  # x shape: (4, 1), P shape: (4, 4)
+
+        # Plot mouse_position
+        mouse_pt1 = (mouse_position_prev - window_top_left_coordinates).reshape(-1)
+        mouse_pt2 = (mouse_position - window_top_left_coordinates).reshape(-1)
+        cv2.line(img, pt1=mouse_pt1, pt2=mouse_pt2, color=GREEN, thickness=1)
         
-        print((x_kalman_prev[0] - x_window, x_kalman_prev[2] - y_window))
-        print((x[0], x[2]))
         # Plot Kalman
-        cv2.line(img, (x_kalman_prev[0] - x_window, x_kalman_prev[2] - y_window),
-                      (x[0] - x_window, x[2] - y_window),
-                      (0,0,255), 1)
+        position_state_indices = [0, 2]
+        predicted_pt1 = (x_kalman_prev[position_state_indices,0] - window_top_left_coordinates).reshape(-1).astype(np.int32)
+        predicted_pt2 = (x[position_state_indices,0] - window_top_left_coordinates).reshape(-1).astype(np.int32)
+        cv2.line(img, pt1=predicted_pt1, pt2=predicted_pt2, color=RED, thickness=1)
         
-        mouse_prev = mouse
+        mouse_position_prev = mouse_position.copy()
         x_kalman_prev = x.copy()
 
-        cv2.imshow('image', img)
-        
+        cv2.imshow(WINDOW_NAME, img)
         k = cv2.waitKey(1) & 0xFF
         if k==27:
             break
 
 def example_2D_constant_velocity():
+    """
+    """
+    print("2D constant velocity example.")
+
     A = 1.0
     B = None
     C = 1.0
@@ -131,4 +149,4 @@ def example_2D_constant_velocity():
 
 if __name__ == "__main__":
     example_2D_constant_velocity_mouse()
-    # example_2D_constant_velocity()
+    example_2D_constant_velocity()

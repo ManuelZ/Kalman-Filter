@@ -1,0 +1,5 @@
+win32gui
+numpy
+matplotlib
+opencv-python
+filterpy  # to compare outputs
