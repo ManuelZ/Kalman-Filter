@@ -1,6 +1,6 @@
 ## Kalman Filter
 
-A straightforward implementation of a Kalman Filter for linear dynamic systems. The Kalman class encapsulates the core steps of the filtering process:
+Python implementation of a Kalman Filter for linear dynamic systems. The Kalman class encapsulates the core steps of the filtering process:
 
 - Initialization: Set up the state, covariance, and system matrices.
 - Prediction: Propagate the current state and uncertainty forward using the system dynamics 
