@@ -4,7 +4,7 @@ from numpy import dot
 
 class Kalman:
     """ 
-    Kalman filters assume linear system dinamics.
+    Kalman filters assume linear system dynamics.
 
     "You have to design the state (x; P), the process (F; Q), the measurement (z; R),and the measurement function H. 
     If the system has control inputs, such as a robot, you will also design B and u." From [4].
