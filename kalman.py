@@ -1,6 +1,4 @@
 import numpy as np
-from math import sqrt
-from numpy import dot
 
 class Kalman:
     """ 
