@@ -7,7 +7,7 @@ from scipy.linalg import block_diag, norm
 from filterpy.common import Q_discrete_white_noise
 
 # Local imports
-from kalman import Kalman
+from kalman_filter.kalman import Kalman
 
 """
 Test my Kalman Filter implementation by comparing its output to the filterpy implementation.

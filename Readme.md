@@ -13,6 +13,20 @@ From [4]:
 ![graphical depiction of KF](resources/kalman_filter.png)
 
 
+## Installation
+
+```bash
+git clone https://github.com/ManuelZ/Kalman-Filter
+cd Kalman-Filter
+uv pip install -e .
+```
+
+## Usage
+
+```python
+from kalman_filter import Kalman
+```
+
 ## Resources
 - [1] [Kalman Filter from the Ground Up](https://www.kalmanfilter.net)
 - [2] [Kalman Filter tutorial](https://youtu.be/18TKA-YWhX0)

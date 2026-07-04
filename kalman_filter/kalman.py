@@ -1,4 +1,5 @@
 import numpy as np
+import numpy.typing as npt
 
 class Kalman:
     """ 
@@ -79,7 +80,7 @@ class Kalman:
         else:
             self.__mode = '2D'
     
-    def predict(self, u=None) -> tuple[np.ndarray, np.ndarray]:
+    def predict(self, u=None) -> tuple[npt.NDArray, npt.NDArray]:
         """ 
         Propagate the current state estimate and uncertainty to form the prior belief for the next time step.
 

@@ -2,7 +2,7 @@ import cv2
 import matplotlib.pyplot as plt
 import win32gui 
 import numpy as np
-from kalman import Kalman
+from kalman_filter.kalman import Kalman
 
 # Only works on Windows
 # Usage: python examples.py
